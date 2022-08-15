@@ -112,6 +112,8 @@ local config = nil
 local keymaps = {
   quit = { rhs = '<cmd>lua require"packer.display".quit()<cr>', action = 'quit' },
   diff = { rhs = '<cmd>lua require"packer.display".diff()<cr>', action = 'show the diff' },
+  remove = { rhs = '<cmd>lua require"packer.display".remove()<cr>', action = 'do not update' },
+  continue = { rhs = '<cmd>lua require"packer.display".continue()<cr>', action = 'continue with updates' },
   toggle_info = {
     rhs = '<cmd>lua require"packer.display".toggle_info()<cr>',
     action = 'show more info',
@@ -129,11 +131,13 @@ local keymaps = {
 --- The order of the keys in a dict-like table isn't guaranteed, meaning the display window can
 --- potentially show the keybindings in a different order every time
 local keymap_display_order = {
-  [1] = 'quit',
-  [2] = 'toggle_info',
-  [3] = 'diff',
-  [4] = 'prompt_revert',
-  [5] = 'retry',
+  [1] = 'continue',
+  [2] = 'remove',
+  [3] = 'quit',
+  [4] = 'toggle_info',
+  [5] = 'diff',
+  [6] = 'prompt_revert',
+  [7] = 'retry',
 }
 
 --- Utility function to prompt a user with a question in a floating window
@@ -385,8 +389,20 @@ local display_mt = {
     self:set_lines(config.header_lines, -1, lines)
   end),
 
+  --- Redraw final results
+  update_final_results = function(self, opts)
+    self:final_results(self.results, self.time, opts)
+  end,
+
   --- Display the final results of an operation
-  final_results = vim.schedule_wrap(function(self, results, time)
+  final_results = vim.schedule_wrap(function(self, results, time, opts)
+    opts = opts or {}
+    -- TODO would be nice to have the option to not show all the commits but just the plugins, one per line
+
+    -- TODO how to update the final results in a good way? For now just cache these to allow to call it again
+    self.results = results
+    self.time = time
+
     if not self:valid_display() then
       return
     end
@@ -442,6 +458,11 @@ local display_mt = {
     end
 
     if results.updates then
+      local change_msg = ' %s Updated %s: %s..%s'
+      if opts.diff_preview then
+        -- TODO only add keys relevant for diff_preview (continue/remove) here?
+        change_msg = ' %s Can update %s: %s..%s'
+      end
       for plugin_name, result in pairs(results.updates) do
         local plugin = results.plugins[plugin_name]
         local message = {}
@@ -455,7 +476,7 @@ local display_mt = {
             table.insert(item_order, plugin_name)
             table.insert(
               message,
-              fmt(' %s Updated %s: %s..%s', config.done_sym, plugin_name, plugin.revs[1], plugin.revs[2])
+              fmt(change_msg, config.done_sym, plugin_name, plugin.revs[1], plugin.revs[2])
             )
           end
         else
@@ -641,6 +662,7 @@ local display_mt = {
   end,
 
   diff = function(self)
+    -- TODO show full diff between range of commits <rev1>...<rev2>
     if not self:valid_display() then
       return
     end
@@ -676,6 +698,30 @@ local display_mt = {
         self:open_preview(commit_hash, lines)
       end)
     end)
+  end,
+
+
+  remove = function(self)
+    local plugin_name, _ = self:find_nearest_plugin()
+    local plugin = self.items[plugin_name]
+    if not plugin then
+      log.warn 'Plugin not available!'
+      return
+    end
+    self.results.updates[plugin_name] = nil
+    self:update_final_results({diff_preview = true})
+  end,
+
+  continue = function(self)
+    local plugins = {}
+    for plugin_name, _ in pairs(self.results.updates) do
+      table.insert(plugins, self.items[plugin_name].spec.short_name)
+    end
+    if #plugins > 0 then
+      require('packer').update_head(unpack(plugins))
+    else
+      log.warn 'No plugins selected!'
+    end
   end,
 
   --- Prompt a user to revert the latest update for a plugin
@@ -888,6 +934,18 @@ end
 display.diff = function()
   if display.status.disp then
     display.status.disp:diff()
+  end
+end
+
+display.remove = function()
+  if display.status.disp then
+    display.status.disp:remove()
+  end
+end
+
+display.continue = function()
+  if display.status.disp then
+    display.status.disp:continue()
   end
 end
 

@@ -27,17 +27,20 @@ local config_defaults = {
     cmd = 'git',
     subcommands = {
       update = 'pull --ff-only --progress --rebase=false',
+      update_head = 'merge FETCH_HEAD',
       install = 'clone --depth %i --no-single-branch --progress',
       fetch = 'fetch --depth 999999 --progress',
       checkout = 'checkout %s --',
       update_branch = 'merge --ff-only @{u}',
       current_branch = 'rev-parse --abbrev-ref HEAD',
       diff = 'log --color=never --pretty=format:FMT --no-show-signature HEAD@{1}...HEAD',
+      diff_fetch = 'log --color=never --pretty=format:FMT --no-show-signature HEAD...FETCH_HEAD',
       diff_fmt = '%%h %%s (%%cr)',
       git_diff_fmt = 'show --no-color --pretty=medium %s',
       get_rev = 'rev-parse --short HEAD',
       get_header = 'log --color=never --pretty=format:FMT --no-show-signature HEAD -n 1',
       get_bodies = 'log --color=never --pretty=format:"===COMMIT_START===%h%n%s===BODY_START===%b" --no-show-signature HEAD@{1}...HEAD',
+      get_bodies_fetch = 'log --color=never --pretty=format:"===COMMIT_START===%h%n%s===BODY_START===%b" --no-show-signature HEAD...FETCH_HEAD',
       submodules = 'submodule update --init --recursive --progress',
       revert = 'reset --hard HEAD@{1}',
       revert_to = 'reset --hard %s --',
@@ -62,7 +65,15 @@ local config_defaults = {
     title = 'packer.nvim',
     show_all_info = true,
     prompt_border = 'double',
-    keybindings = { quit = 'q', toggle_info = '<CR>', diff = 'd', prompt_revert = 'r', retry = 'R' },
+    keybindings = {
+      quit = 'q',
+      remove = 'x',
+      continue = 'c',
+      toggle_info = '<CR>',
+      diff = 'd',
+      prompt_revert = 'r',
+      retry = 'R',
+    },
   },
   luarocks = { python_cmd = 'python' },
   log = { level = 'warn' },
@@ -446,12 +457,7 @@ packer.install = function(...)
   end)()
 end
 
---- Update operation:
--- Takes an optional list of plugin names as an argument. If no list is given, operates on all
--- managed plugins.
--- Fixes plugin types, installs missing plugins, then updates installed plugins and updates helptags
--- and rplugins
-packer.update = function(...)
+local _update = function(opts, ...)
   local log = require_and_configure 'log'
   log.debug 'packer.update: requiring modules'
   local plugin_utils = require_and_configure 'plugin_utils'
@@ -482,7 +488,7 @@ packer.update = function(...)
     local update_tasks
     log.debug 'Gathering update tasks'
     await(a.main)
-    update_tasks, display_win = update(plugins, installed_plugins, display_win, results)
+    update_tasks, display_win = update(plugins, installed_plugins, display_win, results, opts)
     vim.list_extend(tasks, update_tasks)
     log.debug 'Gathering luarocks tasks'
     local luarocks_ensure_task = luarocks.ensure(rocks, results, display_win)
@@ -513,9 +519,24 @@ packer.update = function(...)
     plugin_utils.update_helptags(install_paths)
     plugin_utils.update_rplugins()
     local delta = string.gsub(vim.fn.reltimestr(vim.fn.reltime(start_time)), ' ', '')
-    display_win:final_results(results, delta)
+    display_win:final_results(results, delta, opts)
     packer.on_complete()
   end)()
+end
+
+--- Update operation:
+-- Takes an optional list of plugin names as an argument. If no list is given, operates on all
+-- managed plugins.
+-- Fixes plugin types, installs missing plugins, then updates installed plugins and updates helptags
+-- and rplugins
+packer.update = function(...)
+  _update({diff_preview = false}, ...)
+end
+packer.update_preview = function(...)
+  _update({diff_preview = true}, ...)
+end
+packer.update_head = function(...)
+  _update({pull_head = true}, ...)
 end
 
 --- Sync operation:

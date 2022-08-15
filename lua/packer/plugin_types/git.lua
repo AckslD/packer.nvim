@@ -198,11 +198,12 @@ git.setup = function(plugin)
 
   local submodule_cmd = config.exec_cmd .. config.subcommands.submodules
   local rev_cmd = config.exec_cmd .. config.subcommands.get_rev
-  local update_cmd = config.exec_cmd
+  local fetch_rev_cmd = config.exec_cmd .. string.gsub(config.subcommands.get_rev, 'HEAD', 'FETCH_HEAD')
+  local update_cmd = config.exec_cmd .. config.subcommands.update
+  local update_head_cmd = config.exec_cmd .. config.subcommands.update_head
+  local fetch_cmd = config.exec_cmd .. config.subcommands.fetch
   if plugin.commit or plugin.tag then
-    update_cmd = update_cmd .. config.subcommands.fetch
-  else
-    update_cmd = update_cmd .. config.subcommands.update
+    update_cmd = fetch_cmd
   end
 
   local branch_cmd = config.exec_cmd .. config.subcommands.current_branch
@@ -210,13 +211,6 @@ git.setup = function(plugin)
   for i, arg in ipairs(current_commit_cmd) do
     current_commit_cmd[i] = string.gsub(arg, 'FMT', config.subcommands.diff_fmt)
   end
-
-  local commit_headers_cmd = vim.split(config.exec_cmd .. config.subcommands.diff, '%s+')
-  for i, arg in ipairs(commit_headers_cmd) do
-    commit_headers_cmd[i] = string.gsub(arg, 'FMT', config.subcommands.diff_fmt)
-  end
-
-  local commit_bodies_cmd = config.exec_cmd .. config.subcommands.get_bodies
 
   if plugin.branch or (plugin.tag and not has_wildcard(plugin.tag)) then
     install_cmd[#install_cmd + 1] = '--branch'
@@ -292,7 +286,7 @@ git.setup = function(plugin)
     end)
   end
 
-  plugin.updater = function(disp)
+  plugin.updater = function(disp, opts)
     return async(function()
       local update_info = { err = {}, revs = {}, output = {}, messages = {} }
       local function exit_ok(r)
@@ -397,25 +391,40 @@ git.setup = function(plugin)
         end)
       end
 
-      disp:task_update(plugin_name, 'pulling updates...')
+      disp:task_update(plugin_name, 'fetching updates...')
 
+      if opts.diff_preview then
+        r
+          :and_then(await, jobs.run(fetch_cmd, update_opts))
+      elseif opts.pull_head then
+        r
+          :and_then(await, jobs.run(update_head_cmd, update_opts))
+      else
+        disp:task_update(plugin_name, 'pulling updates...')
+
+        r
+          :and_then(await, jobs.run(update_cmd, update_opts))
+          :and_then(await, jobs.run(submodule_cmd, update_opts))
+      end
       r
-        :and_then(await, jobs.run(update_cmd, update_opts))
-        :and_then(await, jobs.run(submodule_cmd, update_opts))
         :map_err(function(err)
           plugin.output = { err = vim.list_extend(update_info.err, update_info.output), data = {} }
 
           return {
-            msg = fmt('Error pulling updates for %s: %s', plugin_name, table.concat(update_info.output, '\n')),
+            msg = fmt('Error fetching updates for %s: %s', plugin_name, table.concat(update_info.output, '\n')),
             data = err,
           }
         end)
 
+      local post_rev_cmd = rev_cmd
+      if opts.diff_preview then
+        post_rev_cmd = fetch_rev_cmd
+      end
       disp:task_update(plugin_name, 'checking updated commit...')
       r
         :and_then(
           await,
-          jobs.run(rev_cmd, {
+          jobs.run(post_rev_cmd, {
             success_test = exit_ok,
             capture_output = rev_callbacks,
             cwd = install_to,
@@ -434,6 +443,16 @@ git.setup = function(plugin)
         if update_info.revs[1] ~= update_info.revs[2] then
           local commit_headers_onread = jobs.logging_callback(update_info.err, update_info.messages)
           local commit_headers_callbacks = { stdout = commit_headers_onread, stderr = commit_headers_onread }
+
+          local diff_cmd = config.subcommands.diff
+          if opts.diff_preview then
+            diff_cmd = config.subcommands.diff_fetch
+          end
+          local commit_headers_cmd = vim.split(config.exec_cmd .. diff_cmd, '%s+')
+          for i, arg in ipairs(commit_headers_cmd) do
+            commit_headers_cmd[i] = string.gsub(arg, 'FMT', config.subcommands.diff_fmt)
+          end
+
           disp:task_update(plugin_name, 'getting commit messages...')
           r:and_then(
             await,
@@ -455,6 +474,10 @@ git.setup = function(plugin)
             local commit_bodies = { err = {}, output = {} }
             local commit_bodies_onread = jobs.logging_callback(commit_bodies.err, commit_bodies.output)
             local commit_bodies_callbacks = { stdout = commit_bodies_onread, stderr = commit_bodies_onread }
+            local commit_bodies_cmd = config.exec_cmd .. config.subcommands.get_bodies
+            if opts.diff_preview then
+              commit_bodies_cmd = config.exec_cmd .. config.subcommands.get_bodies_fetch
+            end
             disp:task_update(plugin_name, 'checking for breaking changes...')
             r
               :and_then(
