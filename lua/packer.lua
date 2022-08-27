@@ -275,7 +275,7 @@ manage = function(plugin_data)
   end
 
   -- Add the git URL for displaying in PackerStatus and PackerSync.
-  plugins[plugin_spec.short_name].url = plugin_spec.url:gsub('%.git', '')
+  plugins[plugin_spec.short_name].url = util.remove_ending_git_url(plugin_spec.url)
 
   if plugin_spec.requires and config.ensure_dependencies then
     if type(plugin_spec.requires) == 'string' then
@@ -728,7 +728,7 @@ packer.compile = function(raw_args, move_plugins)
     refresh_configs(plugins)
     -- NOTE: we copy the plugins table so the in memory value is not mutated during compilation
     local compiled_loader = compile(vim.deepcopy(plugins), output_lua, should_profile)
-    output_path = vim.fn.expand(output_path)
+    output_path = vim.fn.expand(output_path, true)
     vim.fn.mkdir(vim.fn.fnamemodify(output_path, ':h'), 'p')
     local output_file = io.open(output_path, 'w')
     output_file:write(compiled_loader)
@@ -969,7 +969,7 @@ packer.config = config
 --  as another element, and an optional table of Luarocks rock specifications as another element:
 --  packer.startup({{'tjdevries/colorbuddy.vim'}, config = { ... }, rocks = { ... }})
 packer.startup = function(spec)
-  local log = require_and_configure 'log'
+  local log = require 'packer.log'
   local user_func = nil
   local user_config = nil
   local user_plugins = nil
@@ -995,6 +995,7 @@ packer.startup = function(spec)
 
   packer.init(user_config)
   packer.reset()
+  log = require_and_configure 'log'
 
   if user_func then
     setfenv(user_func, vim.tbl_extend('force', getfenv(), { use = packer.use, use_rocks = packer.use_rocks }))

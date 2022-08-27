@@ -57,7 +57,7 @@ end
 
 local function hererocks_installer(disp)
   return async(function()
-    local hererocks_url = 'https://raw.githubusercontent.com/luarocks/hererocks/latest/hererocks.py'
+    local hererocks_url = 'https://raw.githubusercontent.com/luarocks/hererocks/master/hererocks.py'
     local hererocks_cmd
     await(a.main)
     vim.fn.mkdir(rocks_path, 'p')
@@ -486,9 +486,10 @@ local function ensure_rocks(rocks, results, disp)
     local to_install = {}
     for _, rock in pairs(rocks) do
       if type(rock) == 'table' then
-        rock = rock[1]
+        to_install[rock[1]:lower()] = rock
+      else
+        to_install[rock:lower()] = true
       end
-      to_install[string.lower(rock)] = true
     end
 
     local r = result.ok()

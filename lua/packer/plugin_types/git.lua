@@ -43,6 +43,8 @@ end
 
 local break_tag_pattern = [=[[bB][rR][eE][aA][kK]!?:]=]
 local breaking_change_pattern = [=[[bB][rR][eE][aA][kK][iI][nN][gG][ _][cC][hH][aA][nN][gG][eE]]=]
+local type_exclam_pattern = [=[[a-zA-Z]+!:]=]
+local type_scope_exclam_pattern = [=[[a-zA-Z]+%([^)]+%)!:]=]
 local function mark_breaking_commits(plugin, commit_bodies)
   local commits = vim.gsplit(table.concat(commit_bodies, '\n'), '===COMMIT_START===', true)
   for commit in commits do
@@ -51,12 +53,20 @@ local function mark_breaking_commits(plugin, commit_bodies)
     local lines = vim.split(commit_parts[1], '\n')
     local is_breaking = (
       body ~= nil
-      and ((string.match(body, breaking_change_pattern) ~= nil) or (string.match(body, break_tag_pattern) ~= nil))
+      and (
+        (string.match(body, breaking_change_pattern) ~= nil)
+        or (string.match(body, break_tag_pattern) ~= nil)
+        or (string.match(body, type_exclam_pattern) ~= nil)
+        or (string.match(body, type_scope_exclam_pattern) ~= nil)
+      )
     )
       or (
         lines[2] ~= nil
         and (
-          (string.match(lines[2], breaking_change_pattern) ~= nil) or (string.match(lines[2], break_tag_pattern) ~= nil)
+          (string.match(lines[2], breaking_change_pattern) ~= nil)
+          or (string.match(lines[2], break_tag_pattern) ~= nil)
+          or (string.match(lines[2], type_exclam_pattern) ~= nil)
+          or (string.match(lines[2], type_scope_exclam_pattern) ~= nil)
         )
       )
     if is_breaking then
