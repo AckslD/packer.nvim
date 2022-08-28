@@ -53,6 +53,7 @@ local config_defaults = {
   },
   display = {
     non_interactive = false,
+    compact = false,
     open_fn = nil,
     open_cmd = '65vnew',
     working_sym = '⟳',
