@@ -33,8 +33,7 @@ local config_defaults = {
       checkout = 'checkout %s --',
       update_branch = 'merge --ff-only @{u}',
       current_branch = 'rev-parse --abbrev-ref HEAD',
-      diff = 'log --color=never --pretty=format:FMT --no-show-signature HEAD@{1}...HEAD',
-      diff_fetch = 'log --color=never --pretty=format:FMT --no-show-signature HEAD...FETCH_HEAD',
+      diff = 'log --color=never --pretty=format:FMT --no-show-signature %s...%s',
       diff_fmt = '%%h %%s (%%cr)',
       -- TODO maybe --no-pager should be added for all commands?
       git_diff_fmt = '--no-pager show --no-color --pretty=medium %s',
