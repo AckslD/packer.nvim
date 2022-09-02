@@ -72,6 +72,16 @@ local function format_cmd(value)
   return fmt('"%s"', value)
 end
 
+local has_changes = function(plugin, opts)
+  if plugin.type ~= plugin_utils.git_plugin_type or plugin.revs[1] == plugin.revs[2] then
+    return false
+  end
+  if opts.preview_updates and plugin.commit ~= nil then
+    return false
+  end
+  return true
+end
+
 ---format a configuration value of unknown type into a string or list of strings
 ---@param key string
 ---@param value any
@@ -112,6 +122,8 @@ local config = nil
 local keymaps = {
   quit = { rhs = '<cmd>lua require"packer.display".quit()<cr>', action = 'quit' },
   diff = { rhs = '<cmd>lua require"packer.display".diff()<cr>', action = 'show the diff' },
+  remove = { rhs = '<cmd>lua require"packer.display".remove()<cr>', action = 'do not update' },
+  continue = { rhs = '<cmd>lua require"packer.display".continue()<cr>', action = 'continue with updates' },
   toggle_info = {
     rhs = '<cmd>lua require"packer.display".toggle_info()<cr>',
     action = 'show more info',
@@ -128,12 +140,12 @@ local keymaps = {
 
 --- The order of the keys in a dict-like table isn't guaranteed, meaning the display window can
 --- potentially show the keybindings in a different order every time
-local keymap_display_order = {
-  [1] = 'quit',
-  [2] = 'toggle_info',
-  [3] = 'diff',
-  [4] = 'prompt_revert',
-  [5] = 'retry',
+local default_keymap_display_order = {
+  'quit',
+  'toggle_info',
+  'diff',
+  'prompt_revert',
+  'retry',
 }
 
 --- Utility function to prompt a user with a question in a floating window
@@ -386,10 +398,15 @@ local display_mt = {
   end),
 
   --- Display the final results of an operation
-  final_results = vim.schedule_wrap(function(self, results, time)
+  -- TODO would be nice to have the option to not show all the commits but just the plugins, one per line
+  final_results = vim.schedule_wrap(function(self, results, time, opts)
+    opts = opts or {}
     if not self:valid_display() then
       return
     end
+    local keymap_display_order = {}
+    vim.list_extend(keymap_display_order, default_keymap_display_order)
+    self.results = results
     self:setup_status_syntax()
     display.status.running = false
     time = tonumber(time)
@@ -442,21 +459,27 @@ local display_mt = {
     end
 
     if results.updates then
+      local change_msg = ' %s Updated %s: %s..%s'
+      if opts.preview_updates then
+        change_msg = ' %s Can update %s: %s..%s'
+        table.insert(keymap_display_order, 1, 'continue')
+        table.insert(keymap_display_order, 2, 'remove')
+      end
       for plugin_name, result in pairs(results.updates) do
         local plugin = results.plugins[plugin_name]
         local message = {}
         local actual_update = true
         local failed_update = false
         if result.ok then
-          if plugin.type ~= plugin_utils.git_plugin_type or plugin.revs[1] == plugin.revs[2] then
-            actual_update = false
-            table.insert(message, fmt(' %s %s is already up to date', config.done_sym, plugin_name))
-          else
+          if has_changes(plugin, opts) then
             table.insert(item_order, plugin_name)
             table.insert(
               message,
-              fmt(' %s Updated %s: %s..%s', config.done_sym, plugin_name, plugin.revs[1], plugin.revs[2])
+              fmt(change_msg, config.done_sym, plugin_name, plugin.revs[1], plugin.revs[2])
             )
+          else
+            actual_update = false
+            table.insert(message, fmt(' %s %s is already up to date', config.done_sym, plugin_name))
           end
         else
           failed_update = true
@@ -593,7 +616,12 @@ local display_mt = {
       local plugin_data = self.items[plugin_name]
       if plugin_data and plugin_data.spec.actual_update and #plugin_data.lines > 0 then
         self:set_lines(line, line, plugin_data.lines)
-        line = line + #plugin_data.lines + 1
+        local next_line = line + #plugin_data.lines + 1
+        self.marks[plugin_name] = {
+          start = set_extmark(self.buf, self.ns, nil, line - 1, 0),
+          end_ = set_extmark(self.buf, self.ns, nil, next_line - 1, 0),
+        }
+        line = next_line
         plugin_data.displayed = true
       else
         line = line + 1
@@ -641,6 +669,7 @@ local display_mt = {
   end,
 
   diff = function(self)
+    -- TODO show full diff between range of commits <rev1>...<rev2>
     if not self:valid_display() then
       return
     end
@@ -681,6 +710,42 @@ local display_mt = {
         self:open_preview(commit, lines)
       end)
     end)
+  end,
+
+
+  remove = function(self)
+    local plugin_name, _ = self:find_nearest_plugin()
+    local plugin = self.items[plugin_name]
+    if not plugin then
+      log.warn 'Plugin not available!'
+      return
+    end
+    self.results.updates[plugin_name] = nil
+    self:clear_plugin_text(plugin_name)
+  end,
+
+  clear_plugin_text = function(self, plugin_name)
+    local mark_ids = self.marks[plugin_name]
+    local lines = {
+      start = get_extmark_by_id(self.buf, self.ns, mark_ids.start)[1],
+      end_ = get_extmark_by_id(self.buf, self.ns, mark_ids.end_)[1],
+    }
+    self:set_lines(lines.start, lines.end_, {})
+  end,
+
+  continue = function(self)
+    local plugins = {}
+    for plugin_name, _ in pairs(self.results.updates) do
+      local plugin_data = self.items[plugin_name].spec
+      if plugin_data.actual_update then
+        table.insert(plugins, plugin_data.short_name)
+      end
+    end
+    if #plugins > 0 then
+      require('packer').update({pull_head = true, preview_updates = false}, unpack(plugins))
+    else
+      log.warn 'No plugins selected!'
+    end
   end,
 
   --- Prompt a user to revert the latest update for a plugin
@@ -893,6 +958,18 @@ end
 display.diff = function()
   if display.status.disp then
     display.status.disp:diff()
+  end
+end
+
+display.remove = function()
+  if display.status.disp then
+    display.status.disp:remove()
+  end
+end
+
+display.continue = function()
+  if display.status.disp then
+    display.status.disp:continue()
   end
 end
 
